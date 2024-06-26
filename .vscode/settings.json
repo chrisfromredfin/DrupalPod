@@ -55,4 +55,5 @@
     "**/vendor": true,
   },
   "workbench.startupEditor": "none",
+  "php.version": "8.3",
 }
