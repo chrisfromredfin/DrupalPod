@@ -6,7 +6,7 @@ fi
 # Prerequisite:
 # Manually delete or rename default envs backup file from Google cloud:
 #   https://console.cloud.google.com/storage/browser
-echo "*** Rebuilding ready-made environments from scratch, this will take 8 minutes... (2 minutes per drupal version)"
+echo "*** Rebuilding ready-made environments from scratch, this will take 4 minutes... (2 minutes per drupal version)"
 
 # Stop and unlist current DDEV project
 ddev stop --unlist drupalpod
@@ -21,7 +21,7 @@ mkdir -p "$WORK_DIR"
 readarray -t allDrupalSupportedVersions < "${GITPOD_REPO_ROOT}"/.gitpod/drupal/envs-prep/all-drupal-supported-versions.txt
 
 # Array of all possible install profiles to be prepared during ready_made_envs
-allProfiles=(minimal standard demo_umami)
+allProfiles=(standard)
 
 # Run through each Drupal Supported Versions - a
 # Install minimal, standard and umami profiles
@@ -110,27 +110,5 @@ for d in "${allDrupalSupportedVersions[@]}"; do
 done
 
 
-# compress all environments into a file
-echo "*** Compress all environments into a file"
-cd /workspace &&
-  tar czf ready-made-envs.tar.gz ready-made-envs
-
-# Check if environments file exist in Google Cloud
-
-# Establish connection with Google Cloud through Minio client
-mc config host add gcs https://storage.googleapis.com "$DP_GOOGLE_ACCESS_KEY" "$DP_GOOGLE_SECRET"
-
 CURRENT_BRANCH="$(cd "$GITPOD_REPO_ROOT" && git branch --show-current)"
 DATE_TIME=$(date +"%Y-%m-%d___%H-%M-%p")
-
-if ! mc find gcs/drupalpod/"$CURRENT_BRANCH"/ready-made-envs.tar.gz; then
-  # Upload files if it doesn't exist yet
-  echo "*** Upload environments file to Google Cloud"
-  echo "drupalpod/$CURRENT_BRANCH/ready-made-envs.tar.gz"
-  mc cp /workspace/ready-made-envs.tar.gz gcs/drupalpod/"$CURRENT_BRANCH"/ready-made-envs.tar.gz
-else
-  # File already exist, send a message to manually delete and then upload the file
-  echo "*** File already exist, uploading a copy of the file with branch and date info"
-  echo "drupalpod/$CURRENT_BRANCH/$DATE_TIME/ready-made-envs.tar.gz"
-  mc cp /workspace/ready-made-envs.tar.gz gcs/drupalpod/"$CURRENT_BRANCH"/"$DATE_TIME"/ready-made-envs.tar.gz
-fi

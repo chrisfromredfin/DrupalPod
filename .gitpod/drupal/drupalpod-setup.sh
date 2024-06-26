@@ -23,22 +23,11 @@ export DEVEL_NAME="devel"
 export DEVEL_PACKAGE="drupal/devel:^5"
 
 export ADMIN_TOOLBAR_NAME="admin_toolbar_tools"
-export ADMIN_TOOLBAR_PACKAGE="drupal/admin_toolbar:^3.1"
+export ADMIN_TOOLBAR_PACKAGE="drupal/admin_toolbar:^3.4"
 
 # TODO: once Drupalpod extension supports additional modules - remove these 2 lines
 export DP_EXTRA_DEVEL=1
 export DP_EXTRA_ADMIN_TOOLBAR=1
-
-# Adding support for composer-drupal-lenient - https://packagist.org/packages/mglaman/composer-drupal-lenient
-if [[ "$DP_CORE_VERSION" == 10* ]]; then
-    # admin_toolbar not compatible yet with Drupal 10
-    unset DP_EXTRA_ADMIN_TOOLBAR
-    if [ "$DP_PROJECT_TYPE" != "project_core" ]; then
-        export COMPOSER_DRUPAL_LENIENT=mglaman/composer-drupal-lenient
-    else
-        export COMPOSER_DRUPAL_LENIENT=''
-fi
-fi
 
 # Use PHP 8.1 for Drupal 10.0.x
 if [ -n "$DP_PHP" ] && [ "$DP_PHP" != '8.1' ]; then
@@ -50,6 +39,7 @@ GITMODULESEND
 fi
 
 # Skip setup if it already ran once and if no special setup is set by DrupalPod extension
+cat ${GITPOD_REPO_ROOT}"/.drupalpod_initiated" || true
 if [ ! -f "${GITPOD_REPO_ROOT}"/.drupalpod_initiated ] && [ -n "$DP_PROJECT_TYPE" ]; then
 
     # Add git.drupal.org to known_hosts
@@ -64,6 +54,8 @@ if [ ! -f "${GITPOD_REPO_ROOT}"/.drupalpod_initiated ] && [ -n "$DP_PROJECT_TYPE
     cp "${GITPOD_REPO_ROOT}"/.gitpod/drupal/templates/git-exclude.template "${GITPOD_REPO_ROOT}"/.git/info/exclude
 
     # Get the required repo ready
+    echo "[dddd - PROJECT TYPE] $DP_PROJECT_TYPE"
+    mkdir -p "${GITPOD_REPO_ROOT}"/repos
     if [ "$DP_PROJECT_TYPE" == "project_core" ]; then
         # Find if requested core version is dev or stable
         d="$DP_CORE_VERSION"
@@ -122,11 +114,7 @@ GITMODULESEND
     # Read all Drupal supported versions from a file into an array
     readarray -t allDrupalSupportedVersions < "${GITPOD_REPO_ROOT}"/.gitpod/drupal/envs-prep/all-drupal-supported-versions.txt
 
-    for d in "${allDrupalSupportedVersions[@]}"; do
-        if [ "$d" == "$DP_CORE_VERSION" ]; then
-            ready_made_env_exist=1
-        fi
-    done
+    ready_made_env_exist=0
 
     # Make sure DDEV is running
     ddev start
@@ -134,7 +122,7 @@ GITMODULESEND
     # Restoring requested environment + profile installation
     # $DP_DEFAULT_CORE version was already copied during prebuild,
     # so it can be skipeped if it's the same as requested Drupal core version.
-
+    echo "[dddd - CORE VERSIONS] $DP_CORE_VERSION vs $DP_DEFAULT_CORE"
     if [ "$DP_CORE_VERSION" != "$DP_DEFAULT_CORE" ]; then
         # Remove default site that was installed during prebuild
         rm -rf "${GITPOD_REPO_ROOT}"/web
@@ -142,44 +130,23 @@ GITMODULESEND
         rm -f "${GITPOD_REPO_ROOT}"/composer.json
         rm -f "${GITPOD_REPO_ROOT}"/composer.lock
 
-        if [ "$ready_made_env_exist" ]; then
-            # Extact the file
-            echo "*** Extracting the environments (less than 1 minute)"
-            cd /workspace && time tar zxf ready-made-envs.tar.gz --checkpoint=.10000
 
-            # Copying the ready-made environment of requested Drupal core version
-            cd "$GITPOD_REPO_ROOT" && cp -rT ../ready-made-envs/"$DP_CORE_VERSION"/. .
-        else
-            # If not, run composer create-project with the requested version
+        # For versions end with x - add `-dev` suffix (ie. 9.3.x-dev)
+        # For versions without x - add `~` prefix (ie. ~9.2.0)
+        d="$DP_CORE_VERSION"
+        case $d in
+            *.x)
+            install_version="$d"-dev
+            ;;
+            *)
+            install_version=~"$d"
+            ;;
+        esac
 
-            # For versions end with x - add `-dev` suffix (ie. 9.3.x-dev)
-            # For versions without x - add `~` prefix (ie. ~9.2.0)
-            d="$DP_CORE_VERSION"
-            case $d in
-                *.x)
-                install_version="$d"-dev
-                ;;
-                *)
-                install_version=~"$d"
-                ;;
-            esac
-
-            # Create required composer.json and composer.lock files
-            cd "$GITPOD_REPO_ROOT" && ddev . composer create -n --no-install drupal/recommended-project:"$install_version" temp-composer-files
-            cp "$GITPOD_REPO_ROOT"/temp-composer-files/* "$GITPOD_REPO_ROOT"/.
-            rm -rf "$GITPOD_REPO_ROOT"/temp-composer-files
-        fi
-    fi
-
-    # Check if snapshot can be used (when no full reinstall needed)
-    # Run it before any other DDEV command (to avoid ddev restart)
-
-    if [ ! "$DP_REINSTALL" ] && [ "$DP_INSTALL_PROFILE" != "''" ]; then
-        if [ "$ready_made_env_exist" ]; then
-            # Retrieve pre-made snapshot
-            cd "$GITPOD_REPO_ROOT" && \
-            time ddev snapshot restore "$DP_INSTALL_PROFILE"
-        fi
+        # Create required composer.json and composer.lock files
+        cd "$GITPOD_REPO_ROOT" && ddev . composer create -n --no-install drupal/recommended-project:"$install_version" temp-composer-files
+        cp "$GITPOD_REPO_ROOT"/temp-composer-files/* "$GITPOD_REPO_ROOT"/.
+        rm -rf "$GITPOD_REPO_ROOT"/temp-composer-files
     fi
 
     if [ -n "$DP_PATCH_FILE" ]; then
@@ -196,16 +163,13 @@ GITMODULESEND
     ddev composer config --no-plugins allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
     ddev composer config --no-plugins allow-plugins.phpstan/extension-installer true
 
-    ddev composer config --no-plugins allow-plugins.mglaman/composer-drupal-lenient true
-
-    # Add project source code as symlink (to repos/name_of_project)
+    # Add project source code to web, NOT as a symlink
     # double quotes explained - https://stackoverflow.com/a/1250279/5754049
     if [ -n "$DP_PROJECT_NAME" ]; then
         cd "${GITPOD_REPO_ROOT}" && \
         ddev composer config \
         repositories.core1 \
-        '{"type": "path", "url": "repos/'"$DP_PROJECT_NAME"'", "options": {"symlink": true}}'
-
+        '{"type": "path", "url": "/var/www/html/repos/'"$DP_PROJECT_NAME"'", "options": {"symlink": false}}'
 
         cd "$GITPOD_REPO_ROOT" && \
         ddev composer config minimum-stability dev
@@ -281,24 +245,6 @@ GITMODULESEND
             PROJECT_TYPE=themes
         fi
 
-cat <<PROJECTASYMLINK > "${GITPOD_REPO_ROOT}"/repos/add-project-as-symlink.sh
-#!/usr/bin/env bash
-# This file was dynamically generated by a script
-echo "Replace project with a symlink"
-rm -rf web/$PROJECT_TYPE/contrib/$DP_PROJECT_NAME
-cd web/$PROJECT_TYPE/contrib && ln -s ../../../repos/$DP_PROJECT_NAME .
-PROJECTASYMLINK
-
-        chmod +x "${GITPOD_REPO_ROOT}"/repos/add-project-as-symlink.sh
-
-        echo "$(cat composer.json | jq '.scripts."post-install-cmd" |= . + ["repos/add-project-as-symlink.sh"]')" > composer.json
-        echo "$(cat composer.json | jq '.scripts."post-update-cmd" |= . + ["repos/add-project-as-symlink.sh"]')" > composer.json
-
-        if [ -n "$COMPOSER_DRUPAL_LENIENT" ]; then
-            # Add composer_drupal_lenient for modules on Drupal 10
-            cd "${GITPOD_REPO_ROOT}" && ddev composer config --merge --json extra.drupal-lenient.allowed-list '["drupal/'"$DP_PROJECT_NAME"'"]'
-            cd "${GITPOD_REPO_ROOT}" && time ddev . composer require "$COMPOSER_DRUPAL_LENIENT"
-        fi
         # Add the project to composer (it will get the version according to the branch under `/repo/name_of_project`)
         cd "${GITPOD_REPO_ROOT}" && time ddev . composer require drupal/"$DP_PROJECT_NAME"
     fi
@@ -312,7 +258,7 @@ PROJECTASYMLINK
     if [ "$DP_INSTALL_PROFILE" != "''" ]; then
 
         # Install from scratch, if a full site install is required or ready-made-env doesn't exist
-        if [ -n "$DP_REINSTALL" ] || [ ! "$ready_made_env_exist" ]; then
+        if [ -n "$DP_REINSTALL" ]; then
             # restart ddev - so settings.php gets updated to include settings.ddev.php
             ddev restart
 
@@ -350,7 +296,7 @@ PROJECTASYMLINK
             # Otherwise, check if Olivero should be set as default theme
             if [ -n "$DP_OLIVERO" ]; then
                 cd "${GITPOD_REPO_ROOT}" && \
-                ddev drush then olivero && \
+                ddev drush then -y olivero && \
                 ddev drush config-set -y system.theme default olivero
             fi
         fi
@@ -380,9 +326,6 @@ PROJECTASYMLINK
 else
     cd "${GITPOD_REPO_ROOT}" && ddev start
 fi
-
-# Open internal preview browser with current website
-preview
 
 # Get rid of ready-made-envs directory, to minimize storage of workspace
 if [ -z "$DEBUG_SCRIPT" ]; then
