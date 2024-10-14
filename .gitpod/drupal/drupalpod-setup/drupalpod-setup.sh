@@ -65,6 +65,7 @@ if [ ! -f "${GITPOD_REPO_ROOT}"/.drupalpod_initiated ]; then
     # Measure the time it takes to go through the script
     script_start_time=$(date +%s)
 
+    source "$DIR/contrib_modules_setup.sh"
     source "$DIR/cleanup.sh"
     source "$DIR/composer_setup.sh"
 
